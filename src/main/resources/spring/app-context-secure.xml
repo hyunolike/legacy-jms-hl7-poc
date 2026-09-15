@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  secure: PHI 암복호화, 키 공급, 로그 마스킹.
+  condb-secure 의 secure 계층에 대응한다. (구현은 5단계)
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!--
+      키 공급자. 키를 XML 이나 코드에 두지 않고 환경변수로 주입한다.
+      값이 비어 있으면 afterPropertiesSet 에서 즉시 실패한다(fail-fast).
+      "설정을 빼먹었는데 기본키로 조용히 암호화되는" 상황을 만들지 않기 위해서다.
+
+      운영에서는 아래 EnvKeyProvider 대신 KeyStoreKeyProvider(JCEKS) 로 바꾼다.
+      빈 클래스만 교체하면 되도록 KeyProvider 인터페이스에 의존시켰다.
+
+      Spring Boot 라면: @ConfigurationProperties + Vault/KMS 스타터를 쓰지만,
+      "키를 어디에 두고 언제 회전하느냐"는 설계는 동일하게 직접 해야 한다.
+    -->
+    <bean id="keyProvider" class="com.example.hl7poc.secure.key.EnvKeyProvider">
+        <property name="currentKeyId"  value="${secure.phi.keyId}"/>
+        <property name="encodedKey"    value="${secure.phi.key}"/>
+    </bean>
+
+    <!--
+      AES-256-GCM. 암호문 형식은 v1:{keyId}:{base64 IV}:{base64 ct||tag}.
+      버전과 keyId 를 앞에 붙여야 나중에 키를 회전해도 과거 데이터를 읽을 수 있다.
+      IV 는 매 호출 랜덤 12바이트다(GCM 에서 IV 재사용은 치명적).
+    -->
+    <bean id="phiCipher" class="com.example.hl7poc.secure.AesGcmPhiCipher">
+        <constructor-arg ref="keyProvider"/>
+    </bean>
+
+    <!--
+      블라인드 인덱스. 암호문은 검색이 안 되므로 환자 ID 의 HMAC-SHA256 을 따로
+      저장한다. 평문 SHA-256 은 주민번호/환자번호처럼 값 공간이 좁은 데이터에
+      사전 공격이 통하므로 반드시 키를 쓴 HMAC 이어야 한다.
+      암호화 키와 다른 키를 쓴다(하나가 털려도 나머지가 남도록).
+    -->
+    <bean id="blindIndex" class="com.example.hl7poc.secure.HmacBlindIndex">
+        <property name="encodedKey" value="${secure.blindIndex.key}"/>
+    </bean>
+
+    <!-- 로그 출력 직전 마스킹. DTO 의 toString 도 이 규칙을 탄다. -->
+    <bean id="phiMasker" class="com.example.hl7poc.secure.mask.PhiMasker"/>
+
+</beans>

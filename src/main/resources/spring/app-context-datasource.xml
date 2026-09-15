@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DataSource / JdbcTemplate / 트랜잭션 매니저.
+
+  이 PoC 는 XA 를 쓰지 않는다. SOAP 호출은 애초에 트랜잭션 자원이 아니라서
+  XA 로 묶어도 완전한 원자성을 얻을 수 없고, 대신 Best-Effort 1PC + 멱등성으로
+  간다. 자세한 근거는 docs/01-architecture.md 4.2절.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!--
+      commons-dbcp2 커넥션 풀.
+
+      ⚠ maxTotal 은 반드시 jms.consumers.max 보다 커야 한다.
+        리스너 컨테이너가 컨슈머를 10개까지 늘리는데 풀이 10이면, 모든 컨슈머가
+        커넥션을 하나씩 쥔 상태에서 DLQ 재처리나 헬스체크가 들어오는 순간
+        maxWaitMillis 만큼 기다리다 죽는다. 여기서는 10 + 여유 5 = 15.
+
+      testOnBorrow + validationQuery 는 DB 재기동이나 방화벽 idle timeout 으로
+      끊긴 커넥션을 빌려주는 사고를 막는다. 레거시 환경에서 "새벽에만 죽는"
+      장애의 단골 원인이다.
+    -->
+    <bean id="dataSource" class="org.apache.commons.dbcp2.BasicDataSource"
+          destroy-method="close">
+        <property name="driverClassName" value="${db.driver}"/>
+        <property name="url"             value="${db.url}"/>
+        <property name="username"        value="${db.user}"/>
+        <property name="password"        value="${db.password}"/>
+
+        <property name="initialSize"     value="${db.pool.initialSize}"/>
+        <property name="minIdle"         value="${db.pool.minIdle}"/>
+        <property name="maxIdle"         value="${db.pool.maxIdle}"/>
+        <property name="maxTotal"        value="${db.pool.maxTotal}"/>
+        <property name="maxWaitMillis"   value="${db.pool.maxWaitMillis}"/>
+
+        <property name="validationQuery"      value="${db.pool.validationQuery}"/>
+        <property name="testOnBorrow"         value="true"/>
+        <property name="testWhileIdle"        value="true"/>
+        <property name="timeBetweenEvictionRunsMillis" value="30000"/>
+
+        <!-- 커넥션 누수를 조용히 넘기지 않고 로그로 드러낸다. -->
+        <property name="removeAbandonedOnBorrow"  value="true"/>
+        <property name="removeAbandonedTimeout"   value="120"/>
+        <property name="logAbandoned"             value="true"/>
+    </bean>
+
+    <bean id="jdbcTemplate" class="org.springframework.jdbc.core.JdbcTemplate">
+        <constructor-arg ref="dataSource"/>
+        <!-- 대량 조회 실수를 조기에 드러낸다. 0 이면 무제한. -->
+        <property name="maxRows" value="10000"/>
+    </bean>
+
+    <!--
+      DB 트랜잭션 매니저.
+      이 빈은 두 곳에서 쓰인다.
+        1) 리스너 컨테이너(DMLC)의 transactionManager
+           → onMessage 전 구간이 하나의 DB 트랜잭션이 된다.
+        2) adt 서비스의 tx:advice
+           → DLQ 재처리 도구처럼 JMS 없이 서비스를 직접 부르는 경로를 위한 것.
+             DMLC 경로에서는 PROPAGATION_REQUIRED 로 기존 트랜잭션에 합류만 한다.
+
+      Spring Boot 라면: DataSourceTransactionManager 를 auto-configuration 이
+      자동 등록하므로 이 빈을 직접 쓸 일이 없다.
+    -->
+    <bean id="transactionManager"
+          class="org.springframework.jdbc.datasource.DataSourceTransactionManager">
+        <property name="dataSource" ref="dataSource"/>
+        <!-- 롤백은 예외 상황이다. 조용히 지나가면 원인 추적이 불가능하다. -->
+        <property name="rollbackOnCommitFailure" value="true"/>
+    </bean>
+
+</beans>

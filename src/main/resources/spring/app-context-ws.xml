@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ws: 병원 B SOAP 클라이언트.
+  condb-secure 의 ws(GDS 연동) 계층에 대응한다. (구현은 6단계)
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!--
+      병원 B 입퇴원 통보 클라이언트.
+
+      ⚠ 타임아웃은 선택이 아니라 필수다.
+        이 호출은 DB 트랜잭션 안에서 일어난다. 상대가 응답하지 않는데 무한 대기
+        하면, 커넥션을 쥔 채 멈춘 컨슈머가 쌓여 커넥션 풀이 통째로 마른다.
+        연동 장애 하나가 브리지 전체를 세우는 전형적인 경로다.
+
+      실패 시 던지는 예외는 TransientProcessingException 이다. 리스너가 롤백하고
+      RedeliveryPolicy 에 따라 재시도한다. 상대 시스템의 비즈니스 거절(예: 없는
+      환자)은 재시도해도 결과가 같으므로 PermanentProcessingException 으로 구분한다.
+
+      Spring Boot 라면: spring-boot-starter-web-services 의 WebServiceTemplate
+      또는 선언적 클라이언트를 쓰지만, 타임아웃과 예외 분류는 똑같이 직접 정한다.
+    -->
+    <bean id="hospitalBNotifier" class="com.example.hl7poc.ws.client.HospitalBSoapClient">
+        <property name="endpointUrl"      value="${ws.hospitalB.endpoint}"/>
+        <property name="connectTimeoutMs" value="${ws.hospitalB.connectTimeoutMs}"/>
+        <property name="readTimeoutMs"    value="${ws.hospitalB.readTimeoutMs}"/>
+    </bean>
+
+</beans>

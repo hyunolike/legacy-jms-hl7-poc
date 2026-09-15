@@ -43,8 +43,18 @@
         <dependency org="com.sun.xml.ws" name="jaxws-rt" rev="2.3.7" conf="compile->default"/>
 
         <!-- ── DB ─────────────────────────────────────────────────────────
-             컴파일 시점에는 JDBC 표준 API 만 쓰므로 runtime 으로 충분하다. -->
-        <dependency org="org.postgresql" name="postgresql" rev="42.7.4" conf="runtime->default"/>
+             컴파일 시점에는 JDBC 표준 API 만 쓰므로 드라이버는 runtime 으로 충분하다.
+             커넥션 풀은 commons-dbcp2. 이 시대 레거시에서 가장 흔했고, XML 설정만으로
+             풀 파라미터를 전부 노출한다. 풀 크기는 maxConcurrentConsumers 보다 커야
+             한다(app-context-datasource.xml 주석 참고). -->
+        <dependency org="org.postgresql"     name="postgresql"    rev="42.7.4" conf="runtime->default"/>
+        <dependency org="org.apache.commons" name="commons-dbcp2" rev="2.9.0"  conf="compile->default"/>
+
+        <!-- ── AOP ────────────────────────────────────────────────────────
+             <aop:config> 의 AspectJ 포인트컷 표현식을 파싱하려면 aspectjweaver 가
+             필요하다(위빙은 하지 않는다. 표현식 파서만 쓴다).
+             1.9.21 까지가 Java 8 을 지원한다. -->
+        <dependency org="org.aspectj" name="aspectjweaver" rev="1.9.21" conf="runtime->default"/>
 
         <!-- ── 로깅 ───────────────────────────────────────────────────────
              activemq-client 5.18.6 이 slf4j 2.0 에 맞춰 빌드되어 있어, 1.7.x 를

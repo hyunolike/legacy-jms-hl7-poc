@@ -226,7 +226,7 @@ DMLC(sessionTransacted=true, transactionManager=DataSourceTransactionManager)
 ```
 
 - 커밋 순서는 **DB 먼저, JMS 나중**이다. DB 커밋 후 JMS 커밋이 실패하면 메시지가 재전송되지만, 4.1의 멱등성이 두 번째 처리를 막는다. 반대 순서는 메시지 유실이 되므로 쓰지 않는다.
-- ACK 발행은 리스너의 **같은 JMS 세션**에 참여시킨다(`TransactionAwareConnectionFactoryProxy`). 그래야 "처리 롤백했는데 성공 ACK만 나가는" 상황이 없다.
+- ACK 발행은 `TransactionAwareConnectionFactoryProxy`로 **리스너의 DB 트랜잭션에 동기화**시킨다. 그래야 "처리 롤백했는데 성공 ACK만 나가는" 상황이 없다. (3단계 실측 정정: 컨슈머의 JMS 세션을 공유하는 것이 아니라, 별도 세션의 commit/rollback을 DB 트랜잭션 완료 시점에 묶는 방식이다. 자세한 내용은 [03-spring-xml.md](03-spring-xml.md) 3.1절.)
 - SOAP 호출을 DB 트랜잭션 안에 두면 커넥션을 오래 잡는다. PoC에서는 단순함을 위해 안에 두되, 타임아웃(connect 3s / read 5s)을 반드시 건다. 실무 규모에서는 `adt_message`에 `PENDING_FORWARD`로 커밋하고 별도 워커가 전송하는 아웃박스 패턴이 정석이며, 이 대안도 문서에 남긴다.
 - acknowledge 모드: `sessionTransacted=true`를 쓰므로 `AUTO_ACKNOWLEDGE`/`CLIENT_ACKNOWLEDGE`는 무시된다. 트랜잭션을 끄고 간다면 `CLIENT_ACKNOWLEDGE` + 수동 `message.acknowledge()`가 차선이지만, 재시도 제어가 약해 선택하지 않는다.
 
@@ -344,8 +344,8 @@ CREATE TABLE processing_log (
 |---|---|---|
 | 1 | 아키텍처 + 패키지 구조 (이 문서) | ✅ 완료 |
 | 2 | `docker-compose.yml`, `build.xml`, `ivy.xml` | ✅ 완료 → [02-infrastructure.md](02-infrastructure.md) |
-| 3 | `app-context.xml` + 기능별 XML 5종 | ← 다음 |
-| 4 | HL7 샘플 4종 + `HapiHl7Parser` | 대기 |
+| 3 | `app-context.xml` + 기능별 XML 5종 | ✅ 완료 → [03-spring-xml.md](03-spring-xml.md) |
+| 4 | HL7 샘플 4종 + `HapiHl7Parser` | ← 다음 |
 | 5 | 리스너 / 서비스 / DAO / 암복호화 | 대기 |
 | 6 | 병원 B mock SOAP 서버 + 클라이언트 | 대기 |
 | 7 | ACK 생성, 재시도, DLQ 재처리 | 대기 |
