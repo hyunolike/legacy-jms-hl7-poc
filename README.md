@@ -16,6 +16,7 @@ DB 적재 → 병원 B로 SOAP 전달 → HL7 ACK 응답 발행까지를 재현�
 - [5단계 — 리스너·서비스·DAO·암복호화](docs/05-listener-service-dao-secure.md)
 - [6단계 — 병원 B SOAP 연동](docs/06-soap-integration.md)
 - [7단계 — ACK 생성·재시도·DLQ](docs/07-ack-retry-dlq.md)
+- [8단계 — 시뮬레이터와 통합 시나리오](docs/08-simulator-scenarios.md)
 
 ## 빠른 시작
 
@@ -39,5 +40,5 @@ ActiveMQ 콘솔 http://localhost:8161/admin (admin/admin) · PostgreSQL localhos
 - [x] 5. 리스너, 서비스, DAO, 암복호화 구현
 - [x] 6. mock SOAP 서버와 클라이언트
 - [x] 7. ACK 생성, 재시도, DLQ 처리
-- [ ] 8. 병원 A 시뮬레이터와 통합 테스트 시나리오
+- [x] 8. 병원 A 시뮬레이터와 통합 테스트 시나리오
 - [ ] 9. README 최종본

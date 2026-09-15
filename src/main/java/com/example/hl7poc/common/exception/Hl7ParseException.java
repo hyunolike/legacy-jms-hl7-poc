@@ -16,12 +16,21 @@ public class Hl7ParseException extends Hl7ProcessingException {
 
     private static final long serialVersionUID = 1L;
 
+    /**
+     * 상대에게 보낼 고정 문구.
+     *
+     * <p>파싱 실패의 상세는 거의 항상 파서 라이브러리가 만든 문구이고, HAPI 는
+     * 거기에 원문 앞 50자를 붙인다. 그대로 ACK 에 실으면 환자 정보가 상대 병원
+     * 로그로 넘어간다. 상세는 우리 로그에만 남긴다.
+     */
+    private static final String CLIENT_SAFE_TEXT = "HL7 메시지 구조를 해석할 수 없습니다.";
+
     public Hl7ParseException(String message) {
-        super("HL7-PARSE", message);
+        super("HL7-PARSE", message, CLIENT_SAFE_TEXT, null);
     }
 
     public Hl7ParseException(String message, Throwable cause) {
-        super("HL7-PARSE", message, cause);
+        super("HL7-PARSE", message, CLIENT_SAFE_TEXT, cause);
     }
 
     @Override

@@ -349,5 +349,5 @@ CREATE TABLE processing_log (
 | 5 | 리스너 / 서비스 / DAO / 암복호화 | ✅ 완료 → [05-listener-service-dao-secure.md](05-listener-service-dao-secure.md) |
 | 6 | 병원 B mock SOAP 서버 + 클라이언트 | ✅ 완료 → [06-soap-integration.md](06-soap-integration.md) |
 | 7 | ACK 생성, 재시도, DLQ 재처리 | ✅ 완료 → [07-ack-retry-dlq.md](07-ack-retry-dlq.md) |
-| 8 | 병원 A 시뮬레이터 + 통합 테스트 시나리오 | ← 다음 |
-| 9 | README (다이어그램, 실행 방법, condb-secure 비교) | 대기 |
+| 8 | 병원 A 시뮬레이터 + 통합 테스트 시나리오 | ✅ 완료 → [08-simulator-scenarios.md](08-simulator-scenarios.md) |
+| 9 | README (다이어그램, 실행 방법, condb-secure 비교) | ← 다음 |

@@ -23,18 +23,41 @@ public abstract class Hl7ProcessingException extends RuntimeException {
     /** ERR-3 등에 실어 보낼 내부 오류 코드. 로그 grep 키로도 쓴다. */
     private final String errorCode;
 
+    /**
+     * 상대 시스템에 보내도 되는 문구.
+     *
+     * <p>{@link #getMessage()} 와 나눈 이유가 있다. 예외 메시지에는 진단에 필요한
+     * 상세가 들어가는데, 그 상세가 <b>우리가 쓰지 않은 텍스트</b>일 수 있다.
+     * 실제로 HAPI 의 파싱 예외 메시지는 "참고용"이라며 원문 앞 50자를 그대로
+     * 붙여 준다. 그 문구를 ACK 의 ERR-8 에 실으면 환자 정보가 상대 병원 로그로
+     * 넘어간다 — 우리가 통제할 수 없는 곳에 사본이 생긴다.
+     *
+     * <p>그래서 내부 로그에는 상세를, ACK 에는 이 문구를 쓴다.
+     */
+    private final String clientSafeText;
+
     protected Hl7ProcessingException(String errorCode, String message) {
-        super(message);
-        this.errorCode = errorCode;
+        this(errorCode, message, message, null);
     }
 
     protected Hl7ProcessingException(String errorCode, String message, Throwable cause) {
+        this(errorCode, message, message, cause);
+    }
+
+    protected Hl7ProcessingException(String errorCode, String message,
+                                     String clientSafeText, Throwable cause) {
         super(message, cause);
         this.errorCode = errorCode;
+        this.clientSafeText = clientSafeText;
     }
 
     public String getErrorCode() {
         return errorCode;
+    }
+
+    /** ACK 로 내보낼 문구. 환자 정보나 원문 조각이 섞이지 않은 것만 담는다. */
+    public String getClientSafeText() {
+        return clientSafeText;
     }
 
     /** 이 오류를 송신 측에 어떤 ACK 코드로 알릴지. */

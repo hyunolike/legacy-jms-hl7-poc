@@ -147,7 +147,8 @@ public class AdtMessageListener implements MessageListener {
     private void handleUnparseable(String raw, Hl7ParseException e) {
         LOG.warn("STEP=PARK 파싱 실패로 격리합니다. code={} msg={}", e.getErrorCode(), e.getMessage());
         park(raw, null, null, e);
-        String ack = ackBuilder.buildRejectAck(raw, e.getErrorCode(), e.getMessage());
+        // ACK 에는 상대에게 보내도 되는 문구만 싣는다(원문 조각이 섞이지 않도록).
+        String ack = ackBuilder.buildRejectAck(raw, e.getErrorCode(), e.getClientSafeText());
         ackPublisher.publish(ack, null);
         // 예외를 다시 던지지 않는다 → 트랜잭션이 커밋되고 메시지가 소비된다.
     }
@@ -162,7 +163,8 @@ public class AdtMessageListener implements MessageListener {
         park(raw, facility, controlId, e);
         adtProcessingService.recordParked(facility, controlId, e.getErrorCode(), e.getMessage());
 
-        String ack = ackBuilder.buildAck(header, e.getAckCode(), e.getErrorCode(), e.getMessage());
+        String ack = ackBuilder.buildAck(header, e.getAckCode(),
+                e.getErrorCode(), e.getClientSafeText());
         adtProcessingService.recordAck(facility, controlId, e.getAckCode(), ack);
         ackPublisher.publish(ack, controlId);
     }

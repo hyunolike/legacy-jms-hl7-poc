@@ -191,6 +191,36 @@ public class HapiAckBuilderTest {
     // PHI 보호
     // ------------------------------------------------------------------
 
+    /**
+     * 실제로 유출이 일어났던 경로다.
+     *
+     * <p>HAPI 의 파싱 예외 메시지는 "참고용"이라며 원문 앞 50자를 붙여 준다.
+     * 그 문구를 그대로 ERR-8 에 실었더니 환자 정보가 상대 병원으로 나갔다.
+     * 통합 시나리오에서 ACK 를 눈으로 보고서야 발견했다.
+     */
+    @Test
+    public void 파싱_실패_ACK_에_원문_조각이_새지_않는다() {
+        String raw = "MSH|^~\\&|HIS|HOSP_A|BRIDGE|HOSP_BRIDGE|20260301|"
+                + "|ADT^A01|MSG00000999|P|2.5\rPID|1||PAT000001^^^HOSP_A^MR||홍^길동^^^^^L";
+
+        // 파서가 만드는 예외를 그대로 재현한다(HAPI 문구 + 원문 조각).
+        com.example.hl7poc.common.exception.Hl7ParseException e =
+                new com.example.hl7poc.common.exception.Hl7ParseException(
+                        "HL7 구조를 해석할 수 없습니다: The following is the first 50 chars"
+                                + " of the message for reference: " + raw);
+
+        // 내부 로그용 메시지에는 상세가 남아 있어야 진단이 된다.
+        assertTrue(e.getMessage().contains("PAT000001"));
+
+        // 그러나 ACK 에는 나가면 안 된다.
+        String ack = builder.buildRejectAck(raw, e.getErrorCode(), e.getClientSafeText());
+        String err8 = get(ack, "/ERR-8");
+        assertFalse("환자번호가 ACK 로 나가면 안 된다", err8.contains("PAT000001"));
+        assertFalse("이름이 ACK 로 나가면 안 된다", err8.contains("홍"));
+        assertFalse("원문 조각이 ACK 로 나가면 안 된다", err8.contains("MSH|"));
+        assertTrue("무엇이 문제인지는 알려 준다", err8.contains("HL7-PARSE"));
+    }
+
     @Test
     public void 오류_문구가_길어도_잘라서_보낸다() {
         StringBuilder longText = new StringBuilder();
