@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HL7 ADT 브리지 PoC 용 ActiveMQ Classic 5.18 브로커 설정.
+  배포본 기본 activemq.xml 에서 출발해 아래 세 가지를 바꿨다.
+    1) 큐별 개별 DLQ (individualDeadLetterStrategy)
+    2) PoC 큐 3종 사전 생성 (destinations)
+    3) 메시지 그룹 사용에 맞춘 낮은 prefetch 와 스케줄러 지원
+-->
+<beans
+  xmlns="http://www.springframework.org/schema/beans"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+  http://activemq.apache.org/schema/core http://activemq.apache.org/schema/core/activemq-core.xsd">
+
+    <bean class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer">
+        <property name="locations">
+            <value>file:${activemq.conf}/credentials.properties</value>
+        </property>
+    </bean>
+
+    <!--
+      schedulerSupport="true" 는 브로커측 RedeliveryPlugin(아래 주석) 을 켤 때 필수다.
+      지금은 클라이언트측 RedeliveryPolicy 를 쓰지만, 켜 두어도 부담이 없고
+      나중에 지연 재전송으로 갈아탈 때 브로커 재설정이 필요 없다.
+    -->
+    <broker xmlns="http://activemq.apache.org/schema/core"
+            brokerName="hl7poc"
+            dataDirectory="${activemq.data}"
+            schedulerSupport="true"
+            useJmx="true">
+
+        <!-- PoC 에서 쓰는 큐를 미리 만들어 둔다. 콘솔에서 바로 보인다. -->
+        <destinations>
+            <queue physicalName="Q.HL7.ADT.REQ"/>   <!-- 병원 A → 브리지 (ADT 원문) -->
+            <queue physicalName="Q.HL7.ADT.ACK"/>   <!-- 브리지 → 병원 A (HL7 ACK) -->
+            <queue physicalName="Q.HL7.ADT.PARK"/>  <!-- 재시도 무의미한 영구 오류 격리 -->
+            <!-- DLQ.Q.HL7.ADT.REQ 는 아래 정책에 따라 브로커가 자동 생성한다. -->
+        </destinations>
+
+        <destinationPolicy>
+            <policyMap>
+              <policyEntries>
+
+                <policyEntry queue=">"
+                             prioritizedMessages="false"
+                             useConsumerPriority="true">
+                    <!--
+                      큐마다 전용 DLQ 를 쓴다 (기본값은 모든 큐가 ActiveMQ.DLQ 하나를 공유).
+                      큐별로 분리해야 "어느 흐름이 죽었는지"를 큐 이름만 보고 알 수 있고,
+                      재처리 도구가 원본 큐를 이름으로 역산할 수 있다.
+                        Q.HL7.ADT.REQ → DLQ.Q.HL7.ADT.REQ
+                      processNonPersistent="true" 는 비영속 메시지도 DLQ 로 보낸다.
+                      PoC 시뮬레이터가 비영속으로 보내도 메시지가 조용히 사라지지 않게 하려는 것.
+                    -->
+                    <deadLetterStrategy>
+                        <individualDeadLetterStrategy queuePrefix="DLQ."
+                                                      useQueueForQueueMessages="true"
+                                                      processNonPersistent="true"
+                                                      processExpired="true"/>
+                    </deadLetterStrategy>
+                </policyEntry>
+
+                <policyEntry topic=">">
+                    <pendingMessageLimitStrategy>
+                      <constantPendingMessageLimitStrategy limit="1000"/>
+                    </pendingMessageLimitStrategy>
+                </policyEntry>
+
+              </policyEntries>
+            </policyMap>
+        </destinationPolicy>
+
+        <managementContext>
+            <managementContext createConnector="false"/>
+        </managementContext>
+
+        <persistenceAdapter>
+            <kahaDB directory="${activemq.data}/kahadb"/>
+        </persistenceAdapter>
+
+        <systemUsage>
+            <systemUsage>
+                <memoryUsage>
+                    <memoryUsage percentOfJvmHeap="70"/>
+                </memoryUsage>
+                <storeUsage>
+                    <storeUsage limit="2 gb"/>
+                </storeUsage>
+                <tempUsage>
+                    <tempUsage limit="1 gb"/>
+                </tempUsage>
+            </systemUsage>
+        </systemUsage>
+
+        <transportConnectors>
+            <transportConnector name="openwire"
+                                uri="tcp://0.0.0.0:61616?maximumConnections=1000&amp;wireFormat.maxFrameSize=104857600"/>
+        </transportConnectors>
+
+        <!--
+          ┌─ 브로커측 재전송 플러그인 (현재 비활성) ────────────────────────────┐
+          │ 클라이언트측 RedeliveryPolicy 는 재전송 대기 동안 그 컨슈머를 붙잡아  │
+          │ 둔다. 지연을 분 단위로 길게 가져가려면 아래처럼 브로커 스케줄러에     │
+          │ 맡기는 편이 낫다.                                                    │
+          │                                                                     │
+          │ ※ 둘을 동시에 켜면 재시도가 곱해진다(3회 × 3회). 브로커측으로        │
+          │   전환할 때는 app-context-jms.xml 의 RedeliveryPolicy 를 반드시      │
+          │   maximumRedeliveries="0" 으로 낮춰야 한다.                          │
+          └─────────────────────────────────────────────────────────────────────┘
+        <plugins>
+            <redeliveryPlugin fallbackToDeadLetter="true" sendToDlqIfMaxRetriesExceeded="true">
+                <redeliveryPolicyMap>
+                    <redeliveryPolicyMap>
+                        <redeliveryPolicyEntries>
+                            <redeliveryPolicy queue="Q.HL7.ADT.REQ"
+                                              maximumRedeliveries="3"
+                                              initialRedeliveryDelay="2000"
+                                              redeliveryDelay="2000"
+                                              useExponentialBackOff="true"
+                                              backOffMultiplier="2"/>
+                        </redeliveryPolicyEntries>
+                        <defaultEntry>
+                            <redeliveryPolicy maximumRedeliveries="0"/>
+                        </defaultEntry>
+                    </redeliveryPolicyMap>
+                </redeliveryPolicyMap>
+            </redeliveryPlugin>
+        </plugins>
+        -->
+
+        <shutdownHooks>
+            <bean xmlns="http://www.springframework.org/schema/beans"
+                  class="org.apache.activemq.hooks.SpringContextHook"/>
+        </shutdownHooks>
+
+    </broker>
+
+    <!-- 웹 콘솔 (http://localhost:8161/admin, admin/admin) -->
+    <import resource="jetty.xml"/>
+
+</beans>

@@ -21,3 +21,9 @@ lib/
 # Logs
 logs/
 *.log
+
+# Ivy 부트스트랩 jar
+.ivy/
+
+# 로컬 전용 빌드 오버라이드
+build.properties

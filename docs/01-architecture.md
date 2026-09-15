@@ -17,7 +17,7 @@
 | DB | PostgreSQL 15 (Docker) | Oracle XE는 DAO의 SQL만 교체하면 되도록 분리 |
 | HL7 파서 | HAPI HL7v2 2.3 (`hapi-base`, `hapi-structures-v25`) | HL7 v2.5 구조체 사용 |
 | HL7 버전 | v2.5, `ADT^A01` / `ADT^A03` | MSH-12 = `2.5` |
-| 빌드 | Apache **Ant + Ivy** | 순수 Ant는 jar 40여 개를 수동 관리해야 해서 비현실적 |
+| 빌드 | Apache **Ant + Ivy** | 순수 Ant는 jar 44개를 수동 관리해야 해서 비현실적 (2단계에서 확정) |
 | SOAP | JAX-WS RI (`jaxws-rt`) + 내장 Endpoint | 병원 B mock 서버를 별도 `main()`으로 기동 |
 | 트랜잭션 | XA 미사용 (Best-Effort 1PC + 멱등성) | 이유는 4.2절 |
 | 인코딩 | HL7 메시지는 UTF-8 (`MSH-18 = UNICODE UTF-8`) | 실무에서는 EUC-KR/ISO IR87도 흔함 |
@@ -166,8 +166,8 @@ legacy-jms-hl7-poc/
 ├── lib/                           Ivy가 내려받는 jar (.gitignore)
 ├── docker/
 │   ├── docker-compose.yml         activemq + postgres
-│   ├── activemq/activemq.xml      RedeliveryPlugin, individualDeadLetterStrategy
-│   └── postgres/initdb/01-schema.sql
+│   ├── activemq/activemq.xml      individualDeadLetterStrategy, 큐 사전 생성
+│   └── postgres/initdb/01-schema.sql   ← 스키마의 유일한 출처
 ├── src/
 │   ├── main/
 │   │   ├── java/com/example/hl7poc/...   (2절 구조)
@@ -284,6 +284,10 @@ DMLC(sessionTransacted=true, transactionManager=DataSourceTransactionManager)
 
 ## 5. DB 스키마 초안
 
+> 확정본은 `docker/postgres/initdb/01-schema.sql` 에 있다(2단계에서 컬럼을 보강했다).
+> 아래는 설계 의도를 보기 위한 축약본이다.
+
+
 ```sql
 -- 멱등성 선점 테이블 (가장 먼저 INSERT)
 CREATE TABLE processed_message (
@@ -338,9 +342,9 @@ CREATE TABLE processing_log (
 
 | 단계 | 산출물 | 상태 |
 |---|---|---|
-| 1 | 아키텍처 + 패키지 구조 (이 문서) | ← 지금 |
-| 2 | `docker-compose.yml`, `build.xml`, `ivy.xml` | 대기 |
-| 3 | `app-context.xml` + 기능별 XML 5종 | 대기 |
+| 1 | 아키텍처 + 패키지 구조 (이 문서) | ✅ 완료 |
+| 2 | `docker-compose.yml`, `build.xml`, `ivy.xml` | ✅ 완료 → [02-infrastructure.md](02-infrastructure.md) |
+| 3 | `app-context.xml` + 기능별 XML 5종 | ← 다음 |
 | 4 | HL7 샘플 4종 + `HapiHl7Parser` | 대기 |
 | 5 | 리스너 / 서비스 / DAO / 암복호화 | 대기 |
 | 6 | 병원 B mock SOAP 서버 + 클라이언트 | 대기 |

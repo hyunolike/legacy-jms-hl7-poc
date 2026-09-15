@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ============================================================================
+   HL7 ADT 브리지 PoC — Apache Ant 빌드
+   condb-secure 와 동일하게 WAS 없이 main() 으로 기동하는 standalone 구조다.
+
+   자주 쓰는 명령
+     ant resolve          의존성 내려받기 (lib/)
+     ant compile          컴파일
+     ant dist             실행 가능한 배포본 (dist/)
+     ant run-bridge       ① 브리지 본체 기동
+     ant run-mock         ② 병원 B mock SOAP 서버 기동
+     ant run-simulator    ③ 병원 A 시뮬레이터로 ADT 메시지 발행
+     ant run-dlq          DLQ 재처리 도구
+     ant test             단위 테스트
+     ant docker-up        ActiveMQ + PostgreSQL 기동
+     ant -p               전체 타깃 목록
+
+   Spring Boot 라면: 이 파일 전체가 build.gradle 10 줄 + bootRun 으로 대체된다.
+  ============================================================================
+-->
+<project name="hl7-adt-bridge" default="dist" basedir="."
+         xmlns:ivy="antlib:org.apache.ivy.ant">
+
+    <!-- 로컬에서만 덮어쓸 값이 있으면 build.properties 에 둔다 (git 미추적). -->
+    <property file="build.properties"/>
+
+    <property name="app.name"     value="hl7-adt-bridge"/>
+    <property name="app.version"  value="0.1.0"/>
+
+    <!-- Java 11 로 컴파일한다. Java 8 로 내리려면 8 로 바꾸면 된다
+         (JDK 22 이상에서는 release=8 이 제거되었으니 주의). -->
+    <property name="java.release" value="11"/>
+
+    <property name="src.main.java"      location="src/main/java"/>
+    <property name="src.main.resources" location="src/main/resources"/>
+    <property name="src.test.java"      location="src/test/java"/>
+    <property name="src.test.resources" location="src/test/resources"/>
+
+    <property name="build.dir"          location="build"/>
+    <property name="build.classes"      location="${build.dir}/classes"/>
+    <property name="build.test.classes" location="${build.dir}/test-classes"/>
+    <property name="build.test.reports" location="${build.dir}/test-reports"/>
+    <property name="dist.dir"           location="dist"/>
+    <property name="lib.dir"            location="lib"/>
+
+    <property name="compose.file" location="docker/docker-compose.yml"/>
+
+    <!-- 진입점 (프로세스 3 + 운영 도구 1) -->
+    <property name="main.bridge"    value="com.example.hl7poc.Main"/>
+    <property name="main.mock"      value="com.example.hl7poc.ws.mock.MockHospitalBServer"/>
+    <property name="main.simulator" value="com.example.hl7poc.simulator.HospitalASimulator"/>
+    <property name="main.dlq"       value="com.example.hl7poc.jms.dlq.DlqReprocessor"/>
+
+    <!-- 공통 JVM 옵션. HL7 한글 세그먼트가 깨지지 않게 인코딩을 못 박는다. -->
+    <property name="jvm.encoding" value="-Dfile.encoding=UTF-8"/>
+
+    <!-- run-* 타깃에 인자를 넘기지 않아도 <arg line=""/> 가 깨지지 않게 기본값을 준다. -->
+    <property name="args" value=""/>
+
+    <!-- =====================================================================
+         Ivy 부트스트랩
+         Ivy jar 이 없으면 Maven Central 에서 한 번만 내려받는다.
+         빌드 머신에 Ivy 를 미리 깔아 둘 필요가 없게 하려는 것.
+         ===================================================================== -->
+    <property name="ivy.version"  value="2.5.2"/>
+    <property name="ivy.jar.dir"  location="${basedir}/.ivy"/>
+    <property name="ivy.jar.file" location="${ivy.jar.dir}/ivy-${ivy.version}.jar"/>
+
+    <target name="-ivy-check">
+        <available file="${ivy.jar.file}" property="ivy.jar.present"/>
+    </target>
+
+    <target name="-ivy-download" depends="-ivy-check" unless="ivy.jar.present">
+        <echo message="Ivy ${ivy.version} 를 내려받습니다..."/>
+        <mkdir dir="${ivy.jar.dir}"/>
+        <get src="https://repo1.maven.org/maven2/org/apache/ivy/ivy/${ivy.version}/ivy-${ivy.version}.jar"
+             dest="${ivy.jar.file}" usetimestamp="true"/>
+    </target>
+
+    <target name="-ivy-init" depends="-ivy-download">
+        <taskdef resource="org/apache/ivy/ant/antlib.xml" uri="antlib:org.apache.ivy.ant">
+            <classpath><pathelement location="${ivy.jar.file}"/></classpath>
+        </taskdef>
+    </target>
+
+    <target name="resolve" depends="-ivy-init" unless="skip.resolve"
+            description="의존성 해석 후 lib/ 에 복사 (-Dskip.resolve=true 로 건너뜀)">
+        <ivy:settings file="${basedir}/ivysettings.xml"/>
+        <ivy:resolve file="${basedir}/ivy.xml" log="download-only"/>
+        <!-- conf 별 디렉터리로 나눠 받는다. test 는 runtime 을 extends 하므로
+             lib/test 에는 런타임 jar 도 함께 들어온다. -->
+        <ivy:retrieve pattern="${lib.dir}/[conf]/[artifact]-[revision](-[classifier]).[ext]"
+                      conf="runtime,test" sync="true" log="quiet"/>
+    </target>
+
+    <!-- =====================================================================
+         클래스패스
+         ===================================================================== -->
+    <path id="classpath.compile">
+        <fileset dir="${lib.dir}/runtime" includes="*.jar" erroronmissingdir="false"/>
+    </path>
+
+    <path id="classpath.test.compile">
+        <pathelement location="${build.classes}"/>
+        <fileset dir="${lib.dir}/test" includes="*.jar" erroronmissingdir="false"/>
+    </path>
+
+    <!-- 실행용: 클래스 + 리소스(=build/classes 로 복사됨) + 런타임 jar -->
+    <path id="classpath.run">
+        <pathelement location="${build.classes}"/>
+        <fileset dir="${lib.dir}/runtime" includes="*.jar" erroronmissingdir="false"/>
+    </path>
+
+    <path id="classpath.test.run">
+        <pathelement location="${build.test.classes}"/>
+        <pathelement location="${src.test.resources}"/>
+        <pathelement location="${build.classes}"/>
+        <fileset dir="${lib.dir}/test" includes="*.jar" erroronmissingdir="false"/>
+    </path>
+
+    <!-- =====================================================================
+         컴파일
+         ===================================================================== -->
+    <target name="compile" depends="resolve" description="메인 소스 컴파일">
+        <mkdir dir="${build.classes}"/>
+        <javac srcdir="${src.main.java}" destdir="${build.classes}"
+               release="${java.release}"
+               encoding="UTF-8" debug="true" debuglevel="lines,vars,source"
+               includeantruntime="false" deprecation="true">
+            <classpath refid="classpath.compile"/>
+            <compilerarg value="-Xlint:all,-serial,-processing,-options,-path"/>
+        </javac>
+        <!-- Spring XML, logback.xml, properties 를 클래스패스 루트로 복사 -->
+        <copy todir="${build.classes}">
+            <fileset dir="${src.main.resources}" excludes="**/.gitkeep"/>
+        </copy>
+    </target>
+
+    <target name="compile-test" depends="compile" description="테스트 소스 컴파일">
+        <mkdir dir="${build.test.classes}"/>
+        <javac srcdir="${src.test.java}" destdir="${build.test.classes}"
+               release="${java.release}"
+               encoding="UTF-8" debug="true" includeantruntime="false">
+            <classpath refid="classpath.test.compile"/>
+            <compilerarg value="-Xlint:all,-serial,-processing,-options,-path"/>
+        </javac>
+    </target>
+
+    <!-- =====================================================================
+         패키징
+         ===================================================================== -->
+    <target name="jar" depends="compile,-manifest-classpath" description="애플리케이션 jar 생성">
+        <mkdir dir="${dist.dir}"/>
+        <jar destfile="${dist.dir}/${app.name}-${app.version}.jar" basedir="${build.classes}">
+            <manifest>
+                <attribute name="Implementation-Title"   value="${app.name}"/>
+                <attribute name="Implementation-Version" value="${app.version}"/>
+                <attribute name="Main-Class"             value="${main.bridge}"/>
+                <!-- 의존 jar 은 dist/lib 에 풀어 두고 Class-Path 로 참조한다
+                     (fat jar 을 만들지 않는 것이 이 시대 방식이다). -->
+                <attribute name="Class-Path"             value="${manifest.classpath}"/>
+            </manifest>
+        </jar>
+    </target>
+
+    <target name="dist" depends="jar" description="실행 가능한 배포본 구성 (dist/)">
+        <mkdir dir="${dist.dir}/lib"/>
+        <copy todir="${dist.dir}/lib" flatten="true">
+            <fileset dir="${lib.dir}/runtime" includes="*.jar" erroronmissingdir="false"/>
+        </copy>
+        <echo message="배포본: ${dist.dir}/${app.name}-${app.version}.jar (+ dist/lib)"/>
+        <echo message="실행:   java -cp '${dist.dir}/${app.name}-${app.version}.jar:${dist.dir}/lib/*' ${main.bridge}"/>
+    </target>
+
+    <!-- jar 타깃에서 쓸 Class-Path 문자열을 미리 만든다. -->
+    <target name="-manifest-classpath" depends="resolve">
+        <pathconvert property="manifest.classpath" pathsep=" ">
+            <fileset dir="${lib.dir}/runtime" includes="*.jar" erroronmissingdir="false"/>
+            <mapper type="regexp" from="^.*[/\\]([^/\\]+\.jar)$$" to="lib/\1"/>
+        </pathconvert>
+    </target>
+
+    <!-- =====================================================================
+         실행
+         ===================================================================== -->
+    <target name="run-bridge" depends="compile"
+            description="① 브리지 본체 기동 (ActiveMQ 리스너)">
+        <java classname="${main.bridge}" fork="true" failonerror="true">
+            <classpath refid="classpath.run"/>
+            <jvmarg value="${jvm.encoding}"/>
+        </java>
+    </target>
+
+    <target name="run-mock" depends="compile"
+            description="② 병원 B mock SOAP 서버 기동">
+        <java classname="${main.mock}" fork="true" failonerror="true">
+            <classpath refid="classpath.run"/>
+            <jvmarg value="${jvm.encoding}"/>
+        </java>
+    </target>
+
+    <target name="run-simulator" depends="compile"
+            description="③ 병원 A 시뮬레이터로 ADT 메시지 발행 (-Dargs=&quot;a01 3&quot;)">
+        <java classname="${main.simulator}" fork="true" failonerror="true">
+            <classpath refid="classpath.run"/>
+            <jvmarg value="${jvm.encoding}"/>
+            <arg line="${args}"/>
+        </java>
+    </target>
+
+    <target name="run-dlq" depends="compile"
+            description="DLQ 재처리 도구 (-Dargs=&quot;list&quot; | &quot;replay ALL&quot;)">
+        <java classname="${main.dlq}" fork="true" failonerror="true">
+            <classpath refid="classpath.run"/>
+            <jvmarg value="${jvm.encoding}"/>
+            <arg line="${args}"/>
+        </java>
+    </target>
+
+    <!-- =====================================================================
+         테스트
+         Ant 의 <junit> 태스크는 ant-junit 플러그인이 따로 필요해서 환경을 탄다.
+         JUnitCore 를 직접 호출하면 추가 설치 없이 어디서나 돈다.
+         ===================================================================== -->
+    <target name="test" depends="compile-test" description="단위 테스트 실행">
+        <mkdir dir="${build.test.reports}"/>
+        <pathconvert property="test.classes.list" pathsep=" ">
+            <fileset dir="${build.test.classes}" includes="**/*Test.class"/>
+            <chainedmapper>
+                <globmapper from="${build.test.classes}/*" to="*" handledirsep="true"/>
+                <mapper type="package" from="*.class" to="*"/>
+            </chainedmapper>
+        </pathconvert>
+        <condition property="no.tests">
+            <equals arg1="${test.classes.list}" arg2="" trim="true"/>
+        </condition>
+        <antcall target="-run-junit"/>
+    </target>
+
+    <target name="-run-junit" unless="no.tests">
+        <echo message="테스트 대상: ${test.classes.list}"/>
+        <java classname="org.junit.runner.JUnitCore" fork="true" failonerror="true">
+            <classpath refid="classpath.test.run"/>
+            <jvmarg value="${jvm.encoding}"/>
+            <arg line="${test.classes.list}"/>
+        </java>
+    </target>
+
+    <!-- =====================================================================
+         로컬 인프라 (Docker)
+         ===================================================================== -->
+    <!-- docker compose 는 기본적으로 compose 파일이 있는 디렉터리(docker/)에서
+         .env 를 찾는다. 우리 .env 는 프로젝트 루트에 있으므로 env-file 옵션으로
+         명시해 준다. .env 가 없으면 옵션 자체를 붙이지 않는다. 빈 경로를 넘기면
+         compose 가 오류를 내기 때문이다. -->
+    <target name="-docker-envfile">
+        <condition property="docker.envfile" value="--env-file ${basedir}/.env" else="">
+            <available file="${basedir}/.env"/>
+        </condition>
+    </target>
+
+    <target name="docker-up" depends="-docker-envfile" description="ActiveMQ + PostgreSQL 기동">
+        <exec executable="docker" failonerror="true">
+            <arg line="compose ${docker.envfile} -f ${compose.file} up -d"/>
+        </exec>
+    </target>
+
+    <target name="docker-down" depends="-docker-envfile" description="인프라 정지 (데이터 유지)">
+        <exec executable="docker" failonerror="true">
+            <arg line="compose ${docker.envfile} -f ${compose.file} down"/>
+        </exec>
+    </target>
+
+    <target name="docker-reset" depends="-docker-envfile"
+            description="인프라 정지 + 볼륨 삭제 (스키마 재생성)">
+        <exec executable="docker" failonerror="true">
+            <arg line="compose ${docker.envfile} -f ${compose.file} down -v"/>
+        </exec>
+    </target>
+
+    <target name="docker-logs" depends="-docker-envfile" description="인프라 로그 따라가기">
+        <exec executable="docker" failonerror="true">
+            <arg line="compose ${docker.envfile} -f ${compose.file} logs -f --tail=50"/>
+        </exec>
+    </target>
+
+    <!-- =====================================================================
+         정리
+         ===================================================================== -->
+    <target name="clean" description="빌드 산출물 삭제">
+        <delete dir="${build.dir}"/>
+        <delete dir="${dist.dir}"/>
+    </target>
+
+    <target name="distclean" depends="clean" description="내려받은 의존성까지 삭제">
+        <delete dir="${lib.dir}"/>
+        <delete dir="${ivy.jar.dir}"/>
+    </target>
+
+</project>
