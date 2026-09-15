@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  6단계 ws 계층 배선 검증용. 운영 XML 을 그대로 import 한다.
+  엔드포인트 주소는 테스트가 시스템 프로퍼티로 주입한다
+  (hl7poc.properties 의 ws.hospitalB.endpoint 가 ${HL7POC_HOSPITAL_B_ENDPOINT:...} 이므로).
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd
+           http://www.springframework.org/schema/context
+           http://www.springframework.org/schema/context/spring-context.xsd">
+
+    <context:property-placeholder
+            location="classpath:config/hl7poc.properties"
+            file-encoding="UTF-8"/>
+
+    <import resource="classpath:spring/app-context-ws.xml"/>
+
+</beans>
