@@ -1,0 +1,23 @@
+# Ant / Ivy build output
+build/
+dist/
+lib/
+.ivy2/
+
+# IDE
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+# Secrets — 절대 커밋 금지
+.env
+*.jceks
+*.p12
+*.jks
+*.key
+
+# Logs
+logs/
+*.log
