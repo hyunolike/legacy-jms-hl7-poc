@@ -23,14 +23,15 @@ Apache Ant · Spring XML · ActiveMQ Classic · no WAS, just `main()`
 1. [Why this exists](#why-this-exists)
 2. [Architecture](#architecture)
 3. [How one message flows](#how-one-message-flows)
-4. [Tech stack](#tech-stack)
-5. [Quick start](#quick-start)
-6. [Project structure](#project-structure)
-7. [Design decisions](#design-decisions)
-8. [Bugs this PoC actually caught](#bugs-this-poc-actually-caught)
-9. [Testing](#testing)
-10. [Mapping to `condb-secure`](#mapping-to-condb-secure)
-11. [Documentation](#documentation)
+4. [Screens](#screens)
+5. [Tech stack](#tech-stack)
+6. [Quick start](#quick-start)
+7. [Project structure](#project-structure)
+8. [Design decisions](#design-decisions)
+9. [Bugs this PoC actually caught](#bugs-this-poc-actually-caught)
+10. [Testing](#testing)
+11. [Mapping to `condb-secure`](#mapping-to-condb-secure)
+12. [Documentation](#documentation)
 
 ---
 
@@ -90,6 +91,89 @@ The listener's only job is **classifying failures**: retry, or park and commit.
 
 Sending no ACK on a transient failure is deliberate. Nothing is settled yet; an early
 `AE` tells the sender the message failed *permanently*.
+
+---
+
+## Screens
+
+There's no UI here beyond the ActiveMQ console — this is a message bridge. What follows
+are **real captures from an actual run**, not mockups. The only editing is trimming the
+logger prefix that repeats on every line.
+
+### Boot — three processes, each from `main()`
+
+<img src="docs/images/screens/01-bridge-boot.png" alt="bridge boot" width="100%">
+
+The key-provider warning is deliberate: keys come from the environment, and the bridge
+refuses to start without them. The plaintext-HTTP warning fires because this PoC talks to
+the mock over `http://`.
+
+### Happy path — admit, then discharge
+
+<img src="docs/images/screens/02-happy-path.png" alt="happy path" width="100%">
+
+Both messages land on **the same consumer thread** (`container-1`) and are processed in
+order — that's `JMSXGroupID` pinning the patient's events to one consumer. Note the
+masking in the log line: `PatientInfo{id=PAT****01, name=홍**, dob=1985****}`.
+
+<img src="docs/images/screens/03-simulator.png" alt="simulator" width="100%">
+
+### ACKs coming back
+
+<img src="docs/images/screens/04-ack.png" alt="ACK output" width="100%">
+
+`AA` for accepted, `AR` with HL7 error code `102` for an unparseable message, `AE` with
+`201` for an unsupported trigger. The `ERR-8` field carries our internal code but **no
+patient data** — that was [bug #5](#bugs-this-poc-actually-caught).
+
+### Idempotency — same message twice
+
+<img src="docs/images/screens/03-idempotency.png" alt="idempotency" width="100%">
+
+`DEDUP_SKIP` then `ACK_REPLAY`: the second delivery skips all business logic and replays
+the stored ACK. Hospital B is notified exactly once.
+
+### Hospital B goes down — retry, then DLQ
+
+<img src="docs/images/screens/05-retry-dlq.png" alt="retry and DLQ" width="100%">
+
+Look at the timestamps: `41.880 → 43.897 → 47.929 → 55.949`. That's **2s, 4s, 8s** —
+exponential backoff actually firing. This is the screen that would have exposed
+[bug #1](#bugs-this-poc-actually-caught), where the same log showed four attempts 0.03s
+apart. Each attempt inserts a row (`id=4,5,6,7`) and rolls it back.
+
+### Recovering — DLQ tooling
+
+<img src="docs/images/screens/06-dlq-tool.png" alt="DLQ tool" width="100%">
+
+`list` prints headers only — never the message body, which is raw HL7 containing patient
+data.
+
+<img src="docs/images/screens/07-replay-ok.png" alt="replay succeeded" width="100%">
+
+After Hospital B recovers, the replayed message goes straight through. `STEP=OUT_OF_ORDER`
+appears because the replayed admission is older than the discharge already stored — the
+database backstop doing its job, without discarding the message.
+
+### What the database looks like
+
+<img src="docs/images/screens/08-db.png" alt="database state" width="100%">
+
+Three things to notice: the same patient always gets **the same hash** (`ed685c2ffd24...`)
+so the row is findable; every `patient_name_enc` is **different** even for the same name,
+because the IV is fresh each time; and `id` jumps `3 → 8`, because ids 4–7 were the
+rolled-back retry attempts. Plaintext searches return **0 rows**.
+
+### ActiveMQ console
+
+<img src="docs/images/screens/activemq-console.png" alt="ActiveMQ console" width="100%">
+
+Three consumers on the request queue, matching `concurrentConsumers=3`. The park queue
+holds the messages that failed permanently; the DLQ holds the ones that exhausted retries.
+
+### Tests
+
+<img src="docs/images/screens/09-test.png" alt="test run" width="100%">
 
 ---
 

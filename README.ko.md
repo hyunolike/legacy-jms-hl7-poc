@@ -23,14 +23,15 @@ Apache Ant · Spring XML · ActiveMQ Classic · WAS 없이 `main()` 하나로
 1. [왜 만들었나](#왜-만들었나)
 2. [아키텍처](#아키텍처)
 3. [메시지 한 건의 흐름](#메시지-한-건의-흐름)
-4. [기술 스택](#기술-스택)
-5. [빠른 시작](#빠른-시작)
-6. [프로젝트 구조](#프로젝트-구조)
-7. [설계 결정](#설계-결정)
-8. [이 PoC 가 실제로 잡아낸 문제들](#이-poc-가-실제로-잡아낸-문제들)
-9. [테스트](#테스트)
-10. [condb-secure 와의 대응](#condb-secure-와의-대응)
-11. [문서](#문서)
+4. [주요 동작 화면](#주요-동작-화면)
+5. [기술 스택](#기술-스택)
+6. [빠른 시작](#빠른-시작)
+7. [프로젝트 구조](#프로젝트-구조)
+8. [설계 결정](#설계-결정)
+9. [이 PoC 가 실제로 잡아낸 문제들](#이-poc-가-실제로-잡아낸-문제들)
+10. [테스트](#테스트)
+11. [condb-secure 와의 대응](#condb-secure-와의-대응)
+12. [문서](#문서)
 
 ---
 
@@ -88,6 +89,86 @@ Apache Ant · Spring XML · ActiveMQ Classic · WAS 없이 `main()` 하나로
 
 일시 오류에 ACK 를 보내지 않는 것은 의도다. 아직 아무것도 확정되지 않았는데 성급한 `AE` 는
 송신 측에 "영구 실패"로 읽힌다.
+
+---
+
+## 주요 동작 화면
+
+메시지 브리지라 ActiveMQ 콘솔 말고는 UI 가 없다. 아래는 **실제로 돌린 결과를 캡처한
+것**이지 목업이 아니다. 손댄 것은 모든 줄에 똑같이 붙는 로거 접두부를 줄인 것뿐이다.
+
+### 기동 — 세 프로세스가 각각 `main()` 으로
+
+<img src="docs/images/screens/01-bridge-boot.png" alt="브리지 기동" width="100%">
+
+키 공급자 로그는 의도된 것이다. 키는 환경변수로 들어오고, 없으면 브리지가 기동을
+거부한다. 평문 HTTP 경고는 이 PoC 가 mock 과 `http://` 로 통신하기 때문에 뜬다.
+
+### 정상 흐름 — 입원, 그리고 퇴원
+
+<img src="docs/images/screens/02-happy-path.png" alt="정상 처리" width="100%">
+
+두 메시지가 **같은 컨슈머 스레드**(`container-1`)에서 순서대로 처리된다. `JMSXGroupID`
+가 그 환자의 이벤트를 한 컨슈머에 고정한 결과다. 로그의 마스킹도 눈여겨볼 것:
+`PatientInfo{id=PAT****01, name=홍**, dob=1985****}`.
+
+<img src="docs/images/screens/03-simulator.png" alt="시뮬레이터" width="100%">
+
+### 돌아오는 ACK
+
+<img src="docs/images/screens/04-ack.png" alt="ACK 출력" width="100%">
+
+정상은 `AA`, 파싱 실패는 HL7 오류 코드 `102` 와 함께 `AR`, 미지원 트리거는 `201` 과 함께
+`AE`. `ERR-8` 에는 우리 내부 코드가 담기되 **환자 정보는 없다** —
+[문제 #5](#이-poc-가-실제로-잡아낸-문제들) 에서 고친 부분이다.
+
+### 멱등성 — 같은 메시지를 두 번
+
+<img src="docs/images/screens/03-idempotency.png" alt="멱등성" width="100%">
+
+`DEDUP_SKIP` 다음 `ACK_REPLAY`. 두 번째 수신은 업무 로직을 통째로 건너뛰고 저장해 둔
+ACK 를 재전송한다. 병원 B 에는 정확히 한 번만 통보된다.
+
+### 병원 B 장애 — 재시도, 그리고 DLQ
+
+<img src="docs/images/screens/05-retry-dlq.png" alt="재시도와 DLQ" width="100%">
+
+타임스탬프를 보자. `41.880 → 43.897 → 47.929 → 55.949`, 정확히 **2초·4초·8초**다.
+지수 백오프가 실제로 동작한다. [문제 #1](#이-poc-가-실제로-잡아낸-문제들) 때는 바로 이
+화면에서 네 번의 시도가 0.03초 간격으로 찍혔다. 각 시도마다 행이 들어갔다가
+(`id=4,5,6,7`) 롤백된다.
+
+### 복구 — DLQ 운영 도구
+
+<img src="docs/images/screens/06-dlq-tool.png" alt="DLQ 도구" width="100%">
+
+`list` 는 헤더만 출력한다. 본문은 환자 정보가 담긴 HL7 원문이라 절대 찍지 않는다.
+
+<img src="docs/images/screens/07-replay-ok.png" alt="재처리 성공" width="100%">
+
+병원 B 가 복구된 뒤 재투입하면 그대로 통과한다. `STEP=OUT_OF_ORDER` 가 뜨는 이유는
+재투입된 입원이 이미 저장된 퇴원보다 과거이기 때문이다. DB 방어선이 제 일을 하되
+메시지를 버리지는 않는다.
+
+### DB 는 이렇게 남는다
+
+<img src="docs/images/screens/08-db.png" alt="DB 상태" width="100%">
+
+세 가지를 볼 것. 같은 환자는 늘 **같은 해시**(`ed685c2ffd24...`)라 행을 찾을 수 있다.
+같은 이름인데도 `patient_name_enc` 는 **전부 다르다** — IV 가 매번 새로 생성되기
+때문이다. 그리고 `id` 가 `3 → 8` 로 건너뛴다. 4~7 이 롤백된 재시도들이다. 평문 검색은
+**0건**이다.
+
+### ActiveMQ 콘솔
+
+<img src="docs/images/screens/activemq-console.png" alt="ActiveMQ 콘솔" width="100%">
+
+요청 큐에 컨슈머 3개, `concurrentConsumers=3` 과 일치한다. 격리 큐에는 영구 실패한
+메시지가, DLQ 에는 재시도를 소진한 메시지가 남는다.
+
+### 테스트
+
+<img src="docs/images/screens/09-test.png" alt="테스트 실행" width="100%">
 
 ---
 
