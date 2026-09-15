@@ -23,6 +23,16 @@
     <bean id="keyProvider" class="com.example.hl7poc.secure.key.EnvKeyProvider">
         <property name="currentKeyId"  value="${secure.phi.keyId}"/>
         <property name="encodedKey"    value="${secure.phi.key}"/>
+        <!--
+          키를 회전하면 currentKeyId/encodedKey 를 새 키로 바꾸고, 예전 키를
+          아래로 옮긴다. 과거 암호문은 접두부에 박힌 keyId 로 예전 키를 찾는다.
+          이 맵을 비우는 순간 그 키로 암호화된 데이터는 영구히 읽을 수 없다.
+        <property name="previousKeys">
+            <map>
+                <entry key="k0" value="${HL7POC_PHI_KEY_K0}"/>
+            </map>
+        </property>
+        -->
     </bean>
 
     <!--
@@ -44,7 +54,11 @@
         <property name="encodedKey" value="${secure.blindIndex.key}"/>
     </bean>
 
-    <!-- 로그 출력 직전 마스킹. DTO 의 toString 도 이 규칙을 탄다. -->
-    <bean id="phiMasker" class="com.example.hl7poc.secure.mask.PhiMasker"/>
+    <!--
+      마스킹은 빈으로 두지 않았다. MaskingUtils(정적 유틸)와 PatientInfo.toString()
+      조합이면 충분하고, 주입받아야 할 상태가 없다. 빈으로 만들면 "주입을 깜빡한
+      곳에서는 마스킹이 안 되는" 경로가 생긴다.
+      1단계 설계안에는 phiMasker 빈이 있었지만 구현하면서 뺐다.
+    -->
 
 </beans>

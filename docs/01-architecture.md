@@ -346,8 +346,8 @@ CREATE TABLE processing_log (
 | 2 | `docker-compose.yml`, `build.xml`, `ivy.xml` | ✅ 완료 → [02-infrastructure.md](02-infrastructure.md) |
 | 3 | `app-context.xml` + 기능별 XML 5종 | ✅ 완료 → [03-spring-xml.md](03-spring-xml.md) |
 | 4 | HL7 샘플 8종 + `HapiHl7Parser` | ✅ 완료 → [04-hl7-parser.md](04-hl7-parser.md) |
-| 5 | 리스너 / 서비스 / DAO / 암복호화 | ← 다음 |
-| 6 | 병원 B mock SOAP 서버 + 클라이언트 | 대기 |
+| 5 | 리스너 / 서비스 / DAO / 암복호화 | ✅ 완료 → [05-listener-service-dao-secure.md](05-listener-service-dao-secure.md) |
+| 6 | 병원 B mock SOAP 서버 + 클라이언트 | ← 다음 |
 | 7 | ACK 생성, 재시도, DLQ 재처리 | 대기 |
 | 8 | 병원 A 시뮬레이터 + 통합 테스트 시나리오 | 대기 |
 | 9 | README (다이어그램, 실행 방법, condb-secure 비교) | 대기 |

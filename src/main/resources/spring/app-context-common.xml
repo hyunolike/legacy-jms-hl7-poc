@@ -43,8 +43,13 @@
         <property name="validationEnabled" value="${hl7.validation.enabled}"/>
     </bean>
 
-    <!-- ACK(AA/AE/AR) 생성기 (7단계) -->
-    <bean id="ackBuilder" class="com.example.hl7poc.common.hl7.AckBuilder">
+    <!--
+      ACK(AA/AE/AR) 생성기.
+      AckBuilder 는 인터페이스이고 구현은 7단계의 HapiAckBuilder 다.
+      5단계 리스너는 인터페이스에만 의존하므로, 7단계에서 ERR 세그먼트를 붙여도
+      리스너는 손대지 않는다.
+    -->
+    <bean id="ackBuilder" class="com.example.hl7poc.common.hl7.HapiAckBuilder">
         <constructor-arg ref="hapiContext"/>
         <property name="sendingApplication" value="${hl7.ack.sendingApp}"/>
         <property name="sendingFacility"    value="${hl7.ack.sendingFacility}"/>
