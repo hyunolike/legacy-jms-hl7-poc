@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  JMS: ConnectionFactory, 재전송 정책, 리스너 컨테이너, JmsTemplate.
-  condb-secure 의 jms 계층에 대응한다.
+  JMS 계층 전체. 기존 import 경로를 유지하기 위한 파일이다.
+
+  실제 내용은 두 파일로 나뉘어 있다.
+    app-context-jms-core.xml     ConnectionFactory, 목적지, JmsTemplate
+    app-context-jms-listener.xml ACK 발행기, 리스너, 리스너 컨테이너
+
+  나눈 이유: DLQ 재처리 도구는 core 만 필요하고 리스너가 뜨면 안 된다.
+  자세한 설명은 core 파일 주석 참고.
 -->
 <beans xmlns="http://www.springframework.org/schema/beans"
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -9,191 +15,7 @@
            http://www.springframework.org/schema/beans
            http://www.springframework.org/schema/beans/spring-beans.xsd">
 
-    <!-- ===================================================================
-         1. ConnectionFactory
-         =================================================================== -->
-
-    <!--
-      클라이언트측 재전송 정책. 2s → 4s → 8s 후 브로커가 DLQ 로 보낸다.
-
-      ⚠ docker/activemq/activemq.xml 의 RedeliveryPlugin(현재 주석)과
-        동시에 켜면 재시도가 곱해진다(3 × 3 = 최대 9회 처리). 브로커측으로
-        옮길 때는 여기 maximumRedeliveries 를 0 으로 내려야 한다.
-
-      클라이언트측의 단점: 재전송 대기 동안 그 컨슈머가 묶여 있다. 지연을 분
-      단위로 길게 가져갈 거라면 브로커측 스케줄러가 맞다.
-    -->
-    <bean id="redeliveryPolicy" class="org.apache.activemq.RedeliveryPolicy">
-        <property name="maximumRedeliveries"    value="${jms.redelivery.max}"/>
-        <property name="initialRedeliveryDelay" value="${jms.redelivery.initialDelayMs}"/>
-        <property name="redeliveryDelay"        value="${jms.redelivery.delayMs}"/>
-        <property name="useExponentialBackOff"  value="true"/>
-        <property name="backOffMultiplier"      value="${jms.redelivery.backOffMultiplier}"/>
-        <property name="maximumRedeliveryDelay" value="${jms.redelivery.maxDelayMs}"/>
-    </bean>
-
-    <bean id="prefetchPolicy" class="org.apache.activemq.ActiveMQPrefetchPolicy">
-        <property name="queuePrefetch" value="${jms.prefetch}"/>
-    </bean>
-
-    <!--
-      원본 ConnectionFactory. 리스너 컨테이너와 트랜잭션 프록시가 "같은 인스턴스"를
-      참조해야 한다. 스레드에 묶인 JMS 세션은 ConnectionFactory 인스턴스를 키로
-      찾기 때문에, 여기를 두 벌로 만들면 ACK 가 리스너 트랜잭션에 합류하지 못한다.
-
-      trustAllPackages 는 기본값(false)을 유지한다. 우리는 TextMessage 만 쓰므로
-      ObjectMessage 역직렬화를 열어 줄 이유가 없다(역직렬화 RCE 경로 차단).
-    -->
-    <bean id="jmsConnectionFactory" class="org.apache.activemq.ActiveMQConnectionFactory">
-        <property name="brokerURL"        value="${jms.broker.url}"/>
-        <property name="userName"         value="${jms.broker.user}"/>
-        <property name="password"         value="${jms.broker.password}"/>
-        <property name="redeliveryPolicy" ref="redeliveryPolicy"/>
-        <property name="prefetchPolicy"   ref="prefetchPolicy"/>
-    </bean>
-
-    <!--
-      발행 전용 ConnectionFactory (세션/프로듀서 캐싱).
-      리스너 트랜잭션 바깥에서 도는 것들 — 시뮬레이터, DLQ 재처리 도구 — 이 쓴다.
-      리스너 컨테이너에는 절대 물리지 않는다. DMLC 는 자체 캐싱을 하므로
-      CachingConnectionFactory 와 겹치면 세션 수명 관리가 어긋난다.
-    -->
-    <bean id="cachingConnectionFactory"
-          class="org.springframework.jms.connection.CachingConnectionFactory">
-        <property name="targetConnectionFactory" ref="jmsConnectionFactory"/>
-        <property name="sessionCacheSize"        value="10"/>
-        <property name="cacheProducers"          value="true"/>
-    </bean>
-
-    <!--
-      트랜잭션 인지 ConnectionFactory.
-      이걸 통해 발행한 ACK 는 리스너가 롤백하면 함께 사라진다 —
-      "처리는 롤백됐는데 성공 ACK 만 나가는" 사고를 막는 장치다.
-
-      동작 원리(실측으로 확인): 컨슈머의 세션을 함께 쓰는 것이 아니다.
-      synchedLocalTransactionAllowed=true 이면, 현재 스레드에 활성 스프링
-      트랜잭션(여기서는 DMLC 가 연 DB 트랜잭션)이 있을 때 별도의 JMS 세션을
-      만들고 그 세션의 commit/rollback 을 DB 트랜잭션의 완료 시점에 묶는다.
-      즉 동기화의 기준점은 "컨슈머 세션"이 아니라 "DB 트랜잭션"이다.
-      그래서 리스너 컨테이너의 cacheLevel 과 무관하게 성립한다.
-
-      다만 ACK 세션 커밋은 DB 커밋 "이후"다. 그 사이에 죽으면 DB 는 커밋됐는데
-      ACK 는 안 나간 상태가 된다. 이 경우 상대가 재전송하고, 멱등성 테이블에
-      저장해 둔 ACK 를 그대로 되돌려준다(docs/01 4.1절).
-    -->
-    <bean id="transactionAwareConnectionFactory"
-          class="org.springframework.jms.connection.TransactionAwareConnectionFactoryProxy">
-        <property name="targetConnectionFactory"       ref="jmsConnectionFactory"/>
-        <property name="synchedLocalTransactionAllowed" value="true"/>
-    </bean>
-
-    <!-- ===================================================================
-         2. 목적지
-         =================================================================== -->
-
-    <bean id="adtRequestQueue" class="org.apache.activemq.command.ActiveMQQueue">
-        <constructor-arg value="${jms.queue.adtRequest}"/>
-    </bean>
-    <bean id="adtAckQueue" class="org.apache.activemq.command.ActiveMQQueue">
-        <constructor-arg value="${jms.queue.adtAck}"/>
-    </bean>
-    <bean id="adtParkQueue" class="org.apache.activemq.command.ActiveMQQueue">
-        <constructor-arg value="${jms.queue.adtPark}"/>
-    </bean>
-    <bean id="adtDlqQueue" class="org.apache.activemq.command.ActiveMQQueue">
-        <constructor-arg value="${jms.queue.adtDlq}"/>
-    </bean>
-
-    <!-- ===================================================================
-         3. JmsTemplate
-         =================================================================== -->
-
-    <!--
-      리스너 안에서 쓰는 템플릿. ACK 발행과 PARK 큐 격리 모두 이걸 쓴다.
-      sessionTransacted=true 여야 트랜잭션 인지 프록시가 세션 합류를 시도한다.
-    -->
-    <bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate">
-        <property name="connectionFactory"  ref="transactionAwareConnectionFactory"/>
-        <property name="sessionTransacted"  value="true"/>
-        <property name="explicitQosEnabled" value="true"/>
-        <property name="deliveryPersistent" value="true"/>
-        <property name="receiveTimeout"     value="${jms.receiveTimeoutMs}"/>
-    </bean>
-
-    <!--
-      리스너 바깥(시뮬레이터, DLQ 재처리)에서 쓰는 템플릿.
-      합류할 트랜잭션이 없으므로 캐싱 팩토리를 그대로 쓴다.
-    -->
-    <bean id="standaloneJmsTemplate" class="org.springframework.jms.core.JmsTemplate">
-        <property name="connectionFactory"  ref="cachingConnectionFactory"/>
-        <property name="explicitQosEnabled" value="true"/>
-        <property name="deliveryPersistent" value="true"/>
-        <property name="receiveTimeout"     value="${jms.receiveTimeoutMs}"/>
-    </bean>
-
-    <!-- ACK 발행기 (7단계) -->
-    <bean id="ackPublisher" class="com.example.hl7poc.jms.publisher.AckPublisher">
-        <constructor-arg ref="jmsTemplate"/>
-        <constructor-arg ref="adtAckQueue"/>
-    </bean>
-
-    <!-- ===================================================================
-         4. 리스너
-         =================================================================== -->
-
-    <!-- ADT 요청 리스너 (5단계) -->
-    <bean id="adtMessageListener" class="com.example.hl7poc.jms.listener.AdtMessageListener">
-        <constructor-arg ref="hl7Parser"/>
-        <constructor-arg ref="adtProcessingService"/>
-        <constructor-arg ref="ackBuilder"/>
-        <constructor-arg ref="ackPublisher"/>
-        <property name="parkTemplate" ref="jmsTemplate"/>
-        <property name="parkQueue"    ref="adtParkQueue"/>
-    </bean>
-
-    <!--
-      리스너 컨테이너. 이 PoC 의 트랜잭션 경계가 여기서 결정된다.
-
-        [DB 트랜잭션 시작]  ← transactionManager 가 연다
-           onMessage(): 멱등성 선점 → 암호화 → DB 적재 → SOAP 호출 → ACK 발행
-        [DB 커밋]
-        [JMS 세션 커밋]     ← 메시지 소비 확정
-        [ACK 실제 전송]     ← 같은 세션이므로 여기서 함께 나간다
-
-      커밋 순서는 DB 가 먼저, JMS 가 나중이다. 그 사이에 죽으면 메시지가 재전송
-      되지만 (sending_facility, MSH-10) 멱등성이 두 번째 처리를 막는다.
-      반대 순서였다면 메시지 유실이 된다.
-
-      ⚠ cacheLevel 을 CACHE_CONSUMER 로 "명시"하는 것이 중요하다.
-        DMLC 는 CACHE_AUTO(기본) 일 때 "외부 트랜잭션 매니저가 있으면 CACHE_NONE"
-        을 고른다. 그런데 CACHE_NONE 이면 매 수신마다 컨슈머를 버리므로,
-        클라이언트측 재전송 지연이 통째로 무시된다(실측: 2s/4s/8s → 0.03s).
-        지연 없는 재시도는 일시 장애를 복구할 시간을 주지 못하므로 사실상
-        재시도가 아니다. 그래서 명시적으로 CACHE_CONSUMER 를 준다.
-        실측 근거는 docs/03-spring-xml.md.
-
-      maxMessagesPerTask 를 주지 않으면(-1) 태스크가 끝나지 않아 컨슈머가 한 번
-      늘면 줄지 않는다. 10 으로 두어 한가해지면 최소치로 돌아오게 한다.
-    -->
-    <bean id="adtRequestListenerContainer"
-          class="org.springframework.jms.listener.DefaultMessageListenerContainer">
-        <property name="connectionFactory"     ref="jmsConnectionFactory"/>
-        <property name="destination"           ref="adtRequestQueue"/>
-        <property name="messageListener"       ref="adtMessageListener"/>
-
-        <property name="sessionTransacted"     value="true"/>
-        <property name="transactionManager"    ref="transactionManager"/>
-
-        <property name="concurrentConsumers"    value="${jms.consumers.min}"/>
-        <property name="maxConcurrentConsumers" value="${jms.consumers.max}"/>
-        <property name="maxMessagesPerTask"     value="${jms.maxMessagesPerTask}"/>
-        <property name="idleConsumerLimit"      value="1"/>
-        <property name="cacheLevelName"         value="${jms.cacheLevelName}"/>
-        <property name="receiveTimeout"         value="${jms.receiveTimeoutMs}"/>
-
-        <!-- 브로커가 죽었다 살아나면 5초 간격으로 재접속을 시도한다. -->
-        <property name="recoveryInterval"       value="5000"/>
-        <property name="autoStartup"            value="true"/>
-    </bean>
+    <import resource="app-context-jms-core.xml"/>
+    <import resource="app-context-jms-listener.xml"/>
 
 </beans>

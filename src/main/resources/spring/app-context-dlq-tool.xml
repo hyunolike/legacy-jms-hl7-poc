@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  운영 도구(DLQ 재처리)용 컨텍스트.
+
+  일부러 가볍게 유지한다.
+    - 리스너를 띄우지 않는다. 도구가 요청 큐에서 메시지를 가져가면 안 된다.
+    - DB, 암복호화, SOAP 을 끌어오지 않는다. 장애 상황에서 쓰는 도구가
+      "DB 가 죽어서 안 뜬다"거나 "키가 없어서 안 뜬다"면 쓸모가 없다.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd
+           http://www.springframework.org/schema/context
+           http://www.springframework.org/schema/context/spring-context.xsd">
+
+    <context:property-placeholder
+            location="classpath:config/hl7poc.properties,
+                      file:${user.home}/.hl7poc/override.properties"
+            ignore-resource-not-found="true"
+            file-encoding="UTF-8"/>
+
+    <import resource="app-context-jms-core.xml"/>
+
+</beans>

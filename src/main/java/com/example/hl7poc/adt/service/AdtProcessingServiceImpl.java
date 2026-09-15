@@ -138,6 +138,15 @@ public class AdtProcessingServiceImpl implements AdtProcessingService {
                              String errorCode, String errorText) {
         processingLogDao.log(sendingFacility, messageControlId, "PARKED",
                 errorCode + " " + errorText);
+
+        // 적재까지 갔다가 병원 B 가 거절한 경우가 있다(WS-REJECTED). 그 행이
+        // PERSISTED 로 남으면 "전달 직전에 죽은 메시지"와 구분되지 않는다.
+        // 적재 전에 실패한 메시지는 대상 행이 없어 0행이며, 이는 정상이다.
+        int updated = adtMessageDao.updateStatusByControlId(
+                sendingFacility, messageControlId, ProcessStatus.PARKED, errorText);
+        if (updated > 0) {
+            LOG.info("STEP=PARKED 적재된 행의 상태를 PARKED 로 바꿨습니다. rows={}", updated);
+        }
     }
 
     private AdtMessageRecord toRecord(AdtEvent event, String patientIdHash) {

@@ -71,11 +71,31 @@
             <tx:method name="find*"   propagation="REQUIRED" read-only="true"/>
             <tx:method name="get*"    propagation="REQUIRED" read-only="true"/>
             <tx:method name="exists*" propagation="REQUIRED" read-only="true"/>
+            <!--
+              no-rollback-for 가 이 설정의 핵심이다.
+
+              PermanentProcessingException 은 "재시도해도 소용없다"는 뜻이고,
+              리스너는 이걸 받으면 격리 큐로 옮기고 AE 를 보낸 뒤 정상 커밋한다.
+              그런데 이 advice 가 예외를 보고 트랜잭션을 rollback-only 로 표시해
+              버리면, 리스너가 이어서 하는 격리 기록과 ACK 기록이 통째로 사라지고
+              커밋 시점에 UnexpectedRollbackException 이 난다. 결과적으로 메시지는
+              재전송되고 DLQ 로 간다 — 우리가 명시적으로 "재시도 무의미"라고
+              분류한 오류인데도.
+
+              종단 간 테스트(상대가_업무적으로_거절하면_재시도하지_않고_격리한다)가
+              이 문제를 잡았다. 계층별 테스트로는 드러나지 않는다. 트랜잭션을 여는
+              쪽(DMLC)과 예외를 분류하는 쪽(리스너)과 예외를 던지는 쪽(서비스)이
+              모두 달라야 재현되기 때문이다.
+
+              TransientProcessingException 은 반대로 반드시 롤백되어야 하므로
+              기본 동작(RuntimeException 롤백)을 그대로 둔다.
+            -->
             <tx:method name="*"
                        propagation="REQUIRED"
                        isolation="READ_COMMITTED"
                        timeout="30"
-                       rollback-for="java.lang.Exception"/>
+                       rollback-for="java.lang.Exception"
+                       no-rollback-for="com.example.hl7poc.common.exception.PermanentProcessingException"/>
         </tx:attributes>
     </tx:advice>
 

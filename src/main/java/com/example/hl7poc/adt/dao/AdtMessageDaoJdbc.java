@@ -35,6 +35,10 @@ public class AdtMessageDaoJdbc implements AdtMessageDao {
     private static final String SQL_UPDATE_STATUS =
             "UPDATE adt_message SET status = ?, last_error = ?, updated_at = now() WHERE id = ?";
 
+    private static final String SQL_UPDATE_STATUS_BY_CTRL =
+            "UPDATE adt_message SET status = ?, last_error = ?, updated_at = now() "
+            + "WHERE sending_facility = ? AND msg_control_id = ?";
+
     private static final String SQL_LATEST_EVENT_TIME =
             "SELECT max(msg_datetime) FROM adt_message WHERE patient_id_hash = ?";
 
@@ -94,6 +98,13 @@ public class AdtMessageDaoJdbc implements AdtMessageDao {
     @Override
     public void updateStatus(long id, ProcessStatus status, String lastError) {
         jdbcTemplate.update(SQL_UPDATE_STATUS, status.name(), truncate(lastError), id);
+    }
+
+    @Override
+    public int updateStatusByControlId(String sendingFacility, String messageControlId,
+                                       ProcessStatus status, String lastError) {
+        return jdbcTemplate.update(SQL_UPDATE_STATUS_BY_CTRL,
+                status.name(), truncate(lastError), sendingFacility, messageControlId);
     }
 
     @Override
