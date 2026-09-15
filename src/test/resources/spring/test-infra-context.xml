@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  3단계 배선 검증용 컨텍스트.
+
+  운영 XML 중 "인프라"에 해당하는 두 개(datasource, jms)를 그대로 import 한다.
+  복사본을 만들지 않는 것이 중요하다. 복사하면 검증한 설정과 실제로 도는 설정이
+  달라져서 검증이 의미를 잃는다.
+
+  업무 빈(hl7Parser, adtProcessingService, ackBuilder ...)은 4~6단계 산출물이라
+  아직 클래스가 없다. import 뒤에 같은 id 로 다시 정의해 스텁으로 가린다.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd
+           http://www.springframework.org/schema/context
+           http://www.springframework.org/schema/context/spring-context.xsd">
+
+    <context:property-placeholder
+            location="classpath:config/hl7poc.properties"
+            file-encoding="UTF-8"/>
+
+    <import resource="classpath:spring/app-context-datasource.xml"/>
+    <import resource="classpath:spring/app-context-jms.xml"/>
+
+    <!-- ↓ import 뒤에 와야 가려진다 -->
+
+    <bean id="ackPublisher" class="com.example.hl7poc.support.StubAckPublisher"/>
+
+    <bean id="adtMessageListener" class="com.example.hl7poc.support.ControllableAdtListener">
+        <property name="jmsTemplate"  ref="jmsTemplate"/>
+        <property name="ackQueue"     ref="adtAckQueue"/>
+        <property name="jdbcTemplate" ref="jdbcTemplate"/>
+    </bean>
+
+</beans>

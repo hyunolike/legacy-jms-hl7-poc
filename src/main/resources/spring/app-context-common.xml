@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  공통: 프로퍼티 치환, HL7 파서, ACK 빌더.
+  HAPI 의존은 이 파일과 common.hl7 패키지 안에만 가둔다.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd
+           http://www.springframework.org/schema/context
+           http://www.springframework.org/schema/context/spring-context.xsd">
+
+    <!--
+      ${...} 치환기. 값은 config/hl7poc.properties 에서 읽고, 그 파일의 값이
+      다시 ${ENV_VAR:기본값} 이므로 최종적으로 환경변수가 이긴다.
+      (중첩 플레이스홀더는 PropertySourcesPlaceholderConfigurer 가 재귀적으로 푼다.)
+
+      운영 배포에서 파일만 갈아끼우고 싶을 때를 위해 홈 디렉터리 오버라이드를
+      하나 더 본다. 없으면 무시한다.
+
+      Spring Boot 라면: application.yml + spring.config.import 로 대체되고,
+      이 빈 자체가 필요 없다.
+    -->
+    <context:property-placeholder
+            location="classpath:config/hl7poc.properties,
+                      file:${user.home}/.hl7poc/override.properties"
+            ignore-resource-not-found="true"
+            file-encoding="UTF-8"/>
+
+    <!--
+      HAPI 컨텍스트. 파서/검증기/모델 클래스 팩토리를 묶어 들고 있는 무거운
+      객체라 싱글턴으로 한 번만 만든다. 스레드 세이프하다.
+      검증 규칙은 4단계에서 Hl7ParserConfig 로 주입한다.
+    -->
+    <bean id="hapiContext" class="ca.uhn.hl7v2.DefaultHapiContext"
+          destroy-method="close"/>
+
+    <!-- HL7 파서 래퍼 (4단계) -->
+    <bean id="hl7Parser" class="com.example.hl7poc.common.hl7.HapiHl7Parser">
+        <constructor-arg ref="hapiContext"/>
+        <property name="validationEnabled" value="${hl7.validation.enabled}"/>
+    </bean>
+
+    <!--
+      ACK(AA/AE/AR) 생성기.
+      AckBuilder 는 인터페이스이고 구현은 7단계의 HapiAckBuilder 다.
+      5단계 리스너는 인터페이스에만 의존하므로, 7단계에서 ERR 세그먼트를 붙여도
+      리스너는 손대지 않는다.
+    -->
+    <bean id="ackBuilder" class="com.example.hl7poc.common.hl7.HapiAckBuilder">
+        <constructor-arg ref="hapiContext"/>
+        <property name="sendingApplication" value="${hl7.ack.sendingApp}"/>
+        <property name="sendingFacility"    value="${hl7.ack.sendingFacility}"/>
+    </bean>
+
+</beans>

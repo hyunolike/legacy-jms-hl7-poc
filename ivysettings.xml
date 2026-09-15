@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ivy 저장소 설정. 순수 Ant 로는 jar 수십 개를 손으로 받아 lib/ 에 넣고
+  버전 충돌을 눈으로 맞춰야 하므로, 의존성 해석만 Ivy 에 맡긴다.
+  (빌드 자체는 여전히 Ant 다. Maven/Gradle 로 넘어가지 않는다.)
+-->
+<ivysettings>
+    <settings defaultResolver="public-chain"/>
+
+    <!-- 캐시는 프로젝트 밖(사용자 홈)에 두어 clean 으로 날아가지 않게 한다. -->
+    <caches defaultCacheDir="${user.home}/.ivy2/cache"/>
+
+    <resolvers>
+        <chain name="public-chain" returnFirst="true">
+            <ibiblio name="central" m2compatible="true" root="https://repo1.maven.org/maven2"/>
+        </chain>
+    </resolvers>
+</ivysettings>

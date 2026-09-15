@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MSH-10(Message Control ID) 하나로 수신부터 ACK 까지 전 구간을 이어 볼 수 있도록
+  MDC 키를 패턴에 고정한다.
+    ctrl = MSH-10, type = MSH-9, pt = 환자 ID 해시 앞 8자, jms = JMSMessageID
+
+  환자 식별정보는 이 포맷을 타고 나가면 안 된다. 원문 HL7 을 통째로 찍는 로그는
+  DEBUG 레벨에서, 그것도 마스킹을 거친 뒤에만 허용한다.
+-->
+<configuration scan="true" scanPeriod="30 seconds">
+
+    <property name="LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [ctrl=%X{msgCtrlId:--} type=%X{msgType:--} pt=%X{patientKey:--}] %logger{36} - %msg%n"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/hl7-adt-bridge.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/hl7-adt-bridge.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>14</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- 업무 로직: 단계(STEP=...) 로그가 여기서 나온다. -->
+    <logger name="com.example.hl7poc" level="DEBUG"/>
+
+    <!-- 프레임워크 소음 억제. DMLC 는 브로커가 끊겼을 때 WARN 이 유용하다. -->
+    <logger name="org.springframework"                  level="INFO"/>
+    <logger name="org.springframework.jms.listener"     level="INFO"/>
+    <logger name="org.apache.activemq"                  level="INFO"/>
+    <!-- HAPI 는 파싱할 때마다 세그먼트 단위로 떠들어서 기본을 올려 둔다. -->
+    <logger name="ca.uhn.hl7v2"                         level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>

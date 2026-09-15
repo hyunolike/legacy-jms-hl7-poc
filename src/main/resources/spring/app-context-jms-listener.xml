@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  JMS 소비 측: ACK 발행기, ADT 리스너, 리스너 컨테이너.
+  app-context-jms-core.xml 의 빈들을 참조한다.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!-- ACK 발행기 (7단계) -->
+    <bean id="ackPublisher" class="com.example.hl7poc.jms.publisher.AckPublisher">
+        <constructor-arg ref="jmsTemplate"/>
+        <constructor-arg ref="adtAckQueue"/>
+    </bean>
+
+    <!-- ===================================================================
+         4. 리스너
+         =================================================================== -->
+
+    <!-- ADT 요청 리스너 (5단계) -->
+    <bean id="adtMessageListener" class="com.example.hl7poc.jms.listener.AdtMessageListener">
+        <constructor-arg ref="hl7Parser"/>
+        <constructor-arg ref="adtProcessingService"/>
+        <constructor-arg ref="ackBuilder"/>
+        <constructor-arg ref="ackPublisher"/>
+        <property name="parkTemplate" ref="jmsTemplate"/>
+        <property name="parkQueue"    ref="adtParkQueue"/>
+    </bean>
+
+    <!--
+      리스너 컨테이너. 이 PoC 의 트랜잭션 경계가 여기서 결정된다.
+
+        [DB 트랜잭션 시작]  ← transactionManager 가 연다
+           onMessage(): 멱등성 선점 → 암호화 → DB 적재 → SOAP 호출 → ACK 발행
+        [DB 커밋]
+        [JMS 세션 커밋]     ← 메시지 소비 확정
+        [ACK 실제 전송]     ← 같은 세션이므로 여기서 함께 나간다
+
+      커밋 순서는 DB 가 먼저, JMS 가 나중이다. 그 사이에 죽으면 메시지가 재전송
+      되지만 (sending_facility, MSH-10) 멱등성이 두 번째 처리를 막는다.
+      반대 순서였다면 메시지 유실이 된다.
+
+      ⚠ cacheLevel 을 CACHE_CONSUMER 로 "명시"하는 것이 중요하다.
+        DMLC 는 CACHE_AUTO(기본) 일 때 "외부 트랜잭션 매니저가 있으면 CACHE_NONE"
+        을 고른다. 그런데 CACHE_NONE 이면 매 수신마다 컨슈머를 버리므로,
+        클라이언트측 재전송 지연이 통째로 무시된다(실측: 2s/4s/8s → 0.03s).
+        지연 없는 재시도는 일시 장애를 복구할 시간을 주지 못하므로 사실상
+        재시도가 아니다. 그래서 명시적으로 CACHE_CONSUMER 를 준다.
+        실측 근거는 docs/03-spring-xml.md.
+
+      maxMessagesPerTask 를 주지 않으면(-1) 태스크가 끝나지 않아 컨슈머가 한 번
+      늘면 줄지 않는다. 10 으로 두어 한가해지면 최소치로 돌아오게 한다.
+    -->
+    <bean id="adtRequestListenerContainer"
+          class="org.springframework.jms.listener.DefaultMessageListenerContainer">
+        <property name="connectionFactory"     ref="jmsConnectionFactory"/>
+        <property name="destination"           ref="adtRequestQueue"/>
+        <property name="messageListener"       ref="adtMessageListener"/>
+
+        <property name="sessionTransacted"     value="true"/>
+        <property name="transactionManager"    ref="transactionManager"/>
+
+        <property name="concurrentConsumers"    value="${jms.consumers.min}"/>
+        <property name="maxConcurrentConsumers" value="${jms.consumers.max}"/>
+        <property name="maxMessagesPerTask"     value="${jms.maxMessagesPerTask}"/>
+        <property name="idleConsumerLimit"      value="1"/>
+        <property name="cacheLevelName"         value="${jms.cacheLevelName}"/>
+        <property name="receiveTimeout"         value="${jms.receiveTimeoutMs}"/>
+
+        <!-- 브로커가 죽었다 살아나면 5초 간격으로 재접속을 시도한다. -->
+        <property name="recoveryInterval"       value="5000"/>
+        <property name="autoStartup"            value="true"/>
+    </bean>
+
+</beans>

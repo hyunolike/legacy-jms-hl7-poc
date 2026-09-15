@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  JMS 계층 전체. 기존 import 경로를 유지하기 위한 파일이다.
+
+  실제 내용은 두 파일로 나뉘어 있다.
+    app-context-jms-core.xml     ConnectionFactory, 목적지, JmsTemplate
+    app-context-jms-listener.xml ACK 발행기, 리스너, 리스너 컨테이너
+
+  나눈 이유: DLQ 재처리 도구는 core 만 필요하고 리스너가 뜨면 안 된다.
+  자세한 설명은 core 파일 주석 참고.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <import resource="app-context-jms-core.xml"/>
+    <import resource="app-context-jms-listener.xml"/>
+
+</beans>
